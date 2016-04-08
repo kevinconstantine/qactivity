@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -10,16 +10,17 @@ session = DBSession()
 
 
 ts = int((datetime.now() - datetime(1970,1,1)).total_seconds())
+cluster="localcluster"
 ip = "192.168.0.7"
 path = "/users/mmurray/music"
 iops = "{ 'a': 1, 'b': 2 }"
 
 # Insert an Iops Record
-new_iops = Iops(ts=ts, ip=ip, path=path, iops=iops)
+new_iops = Iops(ts=ts, cluster=cluster, ip=ip, path=path, iops=iops)
 session.add(new_iops)
 session.commit()
 
 # Insert a capacity record
-new_capacity =  Capacity(ts=ts, path=path, size=12345678901112)
+new_capacity =  Capacity(ts=ts, cluster=cluster, path=path, size=12345678901112)
 session.add(new_capacity)
 session.commit()

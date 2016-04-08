@@ -9,6 +9,7 @@ Base = declarative_base()
 class Iops(Base):
     __tablename__ = 'iops'
     id = Column(Integer, primary_key=True)
+    cluster = Column(String, index=True)
     # ts represents int # of seconds between op datetime and 1/1/1970
     ts = Column(BigInteger, index=True)
     ip = Column(String, index=True)
@@ -21,6 +22,7 @@ class Iops(Base):
 class Capacity(Base):
     __tablename__ = 'capacity'
     id = Column(Integer, primary_key=True)
+    cluster = Column(String, index=True)
     # ts represents int # of seconds between op datetime and 1/1/1970
     ts = Column(BigInteger, index=True)
     path = Column(String, index=True)
