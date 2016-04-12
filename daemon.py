@@ -25,9 +25,12 @@ class Worker(threading.Thread):
     def get_iops(self, ts):
         iops = self.client.get_iops()
         for entry in iops:
-            self.session.add( \
-                Iops(ts=ts, cluster=self.cfg.cluster.hostname,\
-                     path=entry['path'], iops = json.dumps(entry) ))
+            self.session.add(\
+                Iops(ts=ts,\
+                     cluster=self.cfg.cluster.hostname,\
+                     path=entry['path'],\
+                     ip=entry['ip'],\
+                     iops = json.dumps(entry)))
             self.session.commit()
 
     def get_capacity(self, ts):
