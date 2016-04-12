@@ -2,6 +2,8 @@ import re
 import os
 import time
 from collections import OrderedDict
+import logging
+
 
 import qumulo.lib.auth
 import qumulo.lib.request
@@ -114,12 +116,12 @@ class QumuloClient(object):
         return response_object.data
 
 
-    def get_capacity(self):
+    def get_capacity(self, path):
         # return qumulo.rest.fs.read_fs_stats(self.connection, self.credentials).data
-        return self.get_api_response(qumulo.rest.fs.read_fs_stats)
+        return self.get_api_response(qumulo.rest.fs.read_dir_aggregates, path=path)
 
 
-    def get_throughput(self):
+    def get_throughput(self, path):
         api_begin_time = int(time.time() - self.polling_interval)
         throughput = qumulo.rest.analytics.time_series_get(self.connection, self.credentials, api_begin_time).data
         throughput = self.get_api_response(qumulo.rest.analytics.time_series_get, api_begin_time=api_begin_time)
@@ -136,110 +138,31 @@ class QumuloClient(object):
 
 
     def get_iops(self):
-        # TODO:  Need better Map-Reduce code here.... check NumPY ufunc.reduce and friends http://goo.gl/xJYUnV
-        iops_types = OrderedDict([("read", "file_read"), ("write", "file_write"), ("namespace-read", "namespace_read"),
-                                  ("namespace-write", "namespace_write"), ("read-agg", ""), ("write-agg", ""),
-                                  ("namespace-read-agg", ""), ("namespace-write-agg", "")])
-        iops_dict = {"counter": 0, "total": 0, "total-agg": 0}
-
-        for c in iops_types:
-            iops_dict[c] = 0
-
-        big_tree = {}
 
         try:
             iops_data = self.get_api_response(qumulo.rest.analytics.iops_get)
-            ids = {}
 
-            for d in iops_data['entries']:
-                inode_id = int(d['id'])
-                if inode_id not in ids:
-                    ids[inode_id] = 1
+            entries = iops_data['entries']
+            ids = [ entry['id'] for entry in entries ]
+            id_map = map(str, ids)
+            unique_ids = sorted(list(set(ids)))
 
-            # print "Get IDS"
-            ids = sorted(ids.keys())
-            id_to_path = {}
+            id_path_arr = \
+                self.get_api_response(qumulo.rest.fs.resolve_paths, \
+                                      ids=unique_ids)
 
-            while len(ids) > 0:
-                fifty_ids = map(str, ids[:100])
-                id_path_arr = self.get_api_response(qumulo.rest.fs.resolve_paths, ids=fifty_ids)
-                for d in id_path_arr:
-                    if int(d['id']) not in id_to_path:
-                        id_to_path[int(d['id'])] = d['path']
-                del ids[:100]
+            results = []
+            for entry in entries:
+                g = [ d for d in id_path_arr if d["id"] == entry["id"]]
+                entry['path'] = g[0]["path"]
+                # if it is one of the paths we're watching,
+                # add to results
+                for path in self.paths:
+                    if entry['path'].startswith(path):
+                        results.append(entry)
 
-            raw = {}
-            raw_only_dirs = {}
-            ips = {}
-            # print "Walk ip Entries"
-            for d in iops_data['entries']:
-                inode_id = int(d['id'])
-                ip = d["ip"]
-                if ip not in ips:
-                    ips[ip] = iops_dict.copy()
-                    ips[ip]["max-iops"] = 0
-                    ips[ip]["max-path"] = ""
-
-                ips[ip]["counter"] += 1
-                ips[ip][d["type"]] += d["rate"]
-                ips[ip]["total"] += d["rate"]
-                try:
-                    if ip + "\t" + id_to_path[inode_id] not in raw:
-                        raw[ip + "\t" + id_to_path[inode_id]] = {"total": 0, "read": 0, "write": 0, "namespace-read": 0,
-                                                                 "namespace-write": 0}
-                        raw[ip + "\t" + id_to_path[inode_id]]["total"] += d["rate"]
-                        raw[ip + "\t" + id_to_path[inode_id]][d["type"]] += d["rate"]
-                    short_path = re.sub("/[^/]*$", "", id_to_path[inode_id])
-                    if ip + "\t" + short_path not in raw_only_dirs:
-                        raw_only_dirs[ip + "\t" + short_path] = {"total": 0, "read": 0, "write": 0, "namespace-read": 0,
-                                                                 "namespace-write": 0}
-                        raw_only_dirs[ip + "\t" + short_path]["total"] += d["rate"]
-                        raw_only_dirs[ip + "\t" + short_path][d["type"]] += d["rate"]
-                except:
-                    pass
-
-                if d["rate"] > ips[ip]["max-iops"]:
-                    try:
-                        ips[ip]["max-path"] = id_to_path[inode_id]
-                    except:
-                        pass
-                    ips[ip]["max-iops"] = d["rate"]
-
-            max_level_count = 5
-            big_tree = self.build_tree(iops_data, id_to_path, iops_dict, max_level_count)
-
-            # print "Build better tree"
-            # 5 iops threshold
-            thresh = 5
-            for level in reversed(range(1, max_level_count + 1)):
-                removal_list = []
-                for path in big_tree[level]:
-                    d = big_tree[level][path]
-                    if d["total"] > thresh:
-                        # keeper, remove iops from parents. o(n^2) :-(
-                        # print "Keeping: %s - %s" % (level, path)
-                        for fix_level, fix_path in enumerate(self.path_to_paths(path)):
-                            if fix_level < level:
-                                for data_type in ["read", "namespace-read", "write", "namespace-write", "total"]:
-                                    big_tree[fix_level][fix_path][data_type] -= d[data_type]
-                    else:
-                        # remove from the treee
-                        removal_list.append(path)
-                for path in removal_list:
-                    # print "Deleting: %s - %s" % (level, path)
-                    del big_tree[level][path]
-
-
-                    # print "Done"
         except:
             pass
-
-        # sigh.... TODO: get rid of this
-        results = []
-        for key, value in big_tree.iteritems():
-            if len(value.values()) > 0:
-                dict = value.values()[0]
-                results.append(dict)
 
         return results
 
