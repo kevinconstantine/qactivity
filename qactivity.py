@@ -67,17 +67,29 @@ qactivity.py -c -p /users/test/foo -s 2016.04.13 13:30 -e 2016.04.13 17:30
 # Get iops for ipbetween specified datetimes in CSV format
 qactivity.py -i 10.8.12.34 -s 2016.04.20 09:00 -e 2016.04.20 12:30 -v
 
-
-
-
 '''
 
 # Import python libraries
 import argparse
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
+import decimal
+import json
 import sys
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from qactivity_tables import Iops, Capacity
+
 from qumulo_client import QumuloClient
+
+#### SQLAlchemy encoding helper function
+def alchemyencoder(obj):
+    """JSON encoder function for SQLAlchemy special classes."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, decimal.Decimal):
+        return float(obj)
+
 
 #### Classes
 class QumuloActivityCommand(object):
@@ -91,35 +103,67 @@ class QumuloActivityCommand(object):
         parser.add_argument("-c","--capacity", dest="capacity", required=False, help="Show Capacity data")
         parser.add_argument("-l", "--latest", dest="latest", type=bool, default=False, required=False, help="Show only latest data")
 
-
+        self.dt_1970 = datetime(1970,1,1)
         args = parser.parse_args()
+        start = args.start
+        end = args.end
 
         self.use_date_range = False
 
         if args.start:
-            self.start = datetime.strptime(args.start, "%Y.%m.%d %H:%M:%S")
-            self.start_ts = int((self.start - datetime(1970, 1, 1)).total_seconds())
             self.use_date_range = True
+            self.start, self.start_ts = self.coerce_datetime(args.start)
 
         if args.end:
-            self.end= datetime.strptime(args.end, "%Y.%m.%d %H:%M:%S")
             self.use_date_range = True
-            self.end_ts = int((self.end - datetime(1970, 1, 1)).total_seconds())
-        elif self.use_date_range is True:
-            self.end = datetime.now()
-            self.end_ts = int((self.end - datetime(1970, 1, 1)).total_seconds())
+            self.end, self.end_ts = self.coerce_datetime(args.end)
 
-
-        self.end = args.end
         self.iops= args.iops
         self.capacity = args.capacity
         self.latest= args.latest
 
+        engine = create_engine('sqlite:///qactivity.sqlite')
+        DBSession = sessionmaker(bind=engine)
+        self.session = DBSession()
+
+
+    def dt_seconds(self, dt):
+        return int((dt - self.dt_1970).total_seconds())
+
+    def seconds_dt(self, seconds):
+        return self.dt_1970 + timedelta(seconds=seconds)
+
+    def coerce_datetime(self, strdatetime):
+        num_colons = strdatetime.count(':')
+        new_datetime = datetime.now()
+        if num_colons == 2:
+            new_datetime = datetime.strptime(strdatetime, "%Y.%m.%d %H:%M:%S")
+        elif num_colons == 1:
+            new_datetime = datetime.strptime(strdatetime, "%Y.%m.%d %H:%M")
+        else:
+            new_datetime = datetime.strptime(strdatetime, "%Y.%m.%d")
+
+        return new_datetime, self.dt_seconds(new_datetime)
 
     def get_activity(self):
         print "get activity"
-        import ipdb; ipdb.set_trace()
-        pass
+        cd = self.session.query(Capacity)\
+        .filter((Capacity.ts >= self.start_ts) & (Capacity.ts <= self.end_ts))
+        cd_list = [ { "id":c.id, "cluster":c.cluster, "dt":self.dt_1970+timedelta(seconds=c.ts), "path":c.path, "size":c.size} for c in iter(cd) ]
+
+        iops = self.session.query(Iops)\
+        .filter((Iops.ts >= self.start_ts) & (Iops.ts <= self.end_ts))
+        iops_list = [ { "id":i.id, "cluster":i.cluster, "dt":self.dt_1970 + timedelta(seconds=i.ts), "path":i.path, "iops":i.iops} for i in iter(iops) ]
+
+        # dump them out as JSON for now
+        print("Capacity data from %1 to %2:", str(self.start), str(self.end))
+        cd_json = json.dumps([dict(r) for r in cd_list], default=alchemyencoder)
+        print(cd_json)
+
+        print("IOPS data from %1 to %2:", str(self.start), str(self.end))
+        iops_json = json.dumps([dict(r) for r in iops_list], default=alchemyencoder)
+        print(iops_json)
+
 
 ### Main subroutine
 def main():

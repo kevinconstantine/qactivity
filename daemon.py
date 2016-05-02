@@ -38,7 +38,8 @@ class Worker(threading.Thread):
         for path in self.cfg.paths:
             capacity = self.client.get_capacity(path)
             # add a Capacity record
-            self.session.add(Capacity(ts=ts, cluster=self.cfg.cluster.hostname, path=path, size=  long(capacity['total_capacity'])))
+            self.session.add(Capacity(ts=ts, cluster=self.cfg.cluster.hostname, \
+                path=path, size=  long(capacity['total_capacity'])))
             self.session.commit()
 
 

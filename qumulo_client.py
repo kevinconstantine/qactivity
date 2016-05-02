@@ -59,9 +59,10 @@ class QumuloClient(object):
                 else:
                     retry = False
             except Exception, excpt:
-               if excpt.status_code == 401 or excpt.status_code == 307:
+               if ("status_code" in excpt) and (excpt.status_code == 401 or excpt.status_code == 307):
                  # is it a 307 or 401?  Try to get a new access token
                 # by logging in again
+                # also handle 503/ out of quorum
                 self.login()
                 logging.error("Error communicating with Qumulo REST server: %s" % excpt)
                 retry = True
