@@ -70,10 +70,12 @@ qactivity.py -i 10.8.12.34 -s 2016.04.20 09:00 -e 2016.04.20 12:30 -v
 '''
 
 # Import python libraries
+from __future__ import print_function
 import argparse
 from datetime import date, datetime, time, timedelta
 import decimal
 import json
+from pprint import pprint
 import sys
 
 from sqlalchemy import create_engine
@@ -99,9 +101,11 @@ class QumuloActivityCommand(object):
         parser = argparse.ArgumentParser()
         parser.add_argument("-s", "--start", dest="start", required=False,  help="Specify start date for activity")
         parser.add_argument("-e", "--end", dest="end", required=False, help="Specify end date for activity")
-        parser.add_argument("-i", "--iops", dest="iops", required=False, help="Show IOPs data")
-        parser.add_argument("-c","--capacity", dest="capacity", required=False, help="Show Capacity data")
-        parser.add_argument("-l", "--latest", dest="latest", type=bool, default=False, required=False, help="Show only latest data")
+        parser.add_argument("-i", "--iops", dest="iops", required=False, action="store_true", help="Show IOPs data")
+        parser.add_argument("-c","--capacity", dest="capacity", required=False, action="store_true", help="Show Capacity data")
+        parser.add_argument("-j","--json", dest="json", action="store_true", required=False, help="Output results as raw JSON")
+        parser.add_argument("-l", "--latest", dest="latest", action="store_true", required=False, help="Show only latest data")
+        parser.add_argument("-v","--csv", dest="csv", action="store_true", required=False, help="Output results in comma-separated lines")
 
         self.dt_1970 = datetime(1970,1,1)
         args = parser.parse_args()
@@ -120,6 +124,13 @@ class QumuloActivityCommand(object):
 
         self.iops= args.iops
         self.capacity = args.capacity
+
+        if (not(self.iops or self.capacity)): # Neither specified; do both
+            self.iops = True
+            self.capacity = True
+
+        self.json = args.json
+        self.csv = args.csv
         self.latest= args.latest
 
         engine = create_engine('sqlite:///qactivity.sqlite')
@@ -145,25 +156,63 @@ class QumuloActivityCommand(object):
 
         return new_datetime, self.dt_seconds(new_datetime)
 
+    def print_capacity_summary(self, results):
+        maxCapacity = max(results, key=lambda x:x['size'])
+        minCapacity = min(results, key=lambda x:x['size'])
+        avgSize = sum(d['size'] for d in results)/ len(results)
+
+        print('Capacity summary from {0} to {1}'.format(str(self.start), str(self.end)))
+        print('Max Usage: Size:{0} Path:{1}'.format(maxCapacity['size'], maxCapacity['path']))
+        print('Min Usage: Size:{0} Path:{1}'.format(minCapacity['size'], minCapacity['path']))
+        print('Avg Usage: Size:{0}'.format(avgSize))
+
+    def print_iops_summary(self, results):
+        pass
+
+    def print_summary(self, operations, results):
+
+
+        for idx, operation in enumerate(operations):
+
+            if self.json:
+                # dump them out as JSON for now
+                print("$s data from %1 to %2:", operation, str(self.start), str(self.end))
+                list_json = json.dumps([dict(e) for e in results[idx]], default=alchemyencoder)
+                pprint(list_json)
+            elif self.csv:
+                print("TODO: CSV output")
+                pass
+            else:
+                # Just a summary based on the type of data
+                if operation == "Capacity":
+                    self.print_capacity_summary(results[idx])
+                else:
+                    self.print_iops_summary(results[idx])
+                pass
+
     def get_activity(self):
-        print "get activity"
-        cd = self.session.query(Capacity)\
-        .filter((Capacity.ts >= self.start_ts) & (Capacity.ts <= self.end_ts))
-        cd_list = [ { "id":c.id, "cluster":c.cluster, "dt":self.dt_1970+timedelta(seconds=c.ts), "path":c.path, "size":c.size} for c in iter(cd) ]
+        operations = []
+        results = []
 
-        iops = self.session.query(Iops)\
-        .filter((Iops.ts >= self.start_ts) & (Iops.ts <= self.end_ts))
-        iops_list = [ { "id":i.id, "cluster":i.cluster, "dt":self.dt_1970 + timedelta(seconds=i.ts), "path":i.path, "iops":i.iops} for i in iter(iops) ]
+        # IOPs and/or Capacity
+        if self.iops:
+            operations.append("IOPs")
+        if self.capacity:
+            operations.append("Capacity")
 
-        # dump them out as JSON for now
-        print("Capacity data from %1 to %2:", str(self.start), str(self.end))
-        cd_json = json.dumps([dict(r) for r in cd_list], default=alchemyencoder)
-        print(cd_json)
+        if "Capacity" in operations:
+            cd = self.session.query(Capacity)\
+            .filter((Capacity.ts >= self.start_ts) & (Capacity.ts <= self.end_ts))
+            cd_list = [ { "id":c.id, "cluster":c.cluster, "dt":self.dt_1970+timedelta(seconds=c.ts), "path":c.path, "size":c.size} for c in iter(cd) ]
+            results.append(cd_list)
 
-        print("IOPS data from %1 to %2:", str(self.start), str(self.end))
-        iops_json = json.dumps([dict(r) for r in iops_list], default=alchemyencoder)
-        print(iops_json)
+        if "IOPs" in operations:
+            iops = self.session.query(Iops)\
+            .filter((Iops.ts >= self.start_ts) & (Iops.ts <= self.end_ts))
+            iops_list = [ { "id":i.id, "cluster":i.cluster, "dt":self.dt_1970 + timedelta(seconds=i.ts), "path":i.path, "iops":i.iops} for i in iter(iops) ]
+            results.append(iops_list)
 
+        self.print_summary(operations, results)
 
 ### Main subroutine
 def main():
