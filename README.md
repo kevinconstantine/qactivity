@@ -1,4 +1,4 @@
-# Qumulo Activity Reporting Tool (qactivity): Show IOPS+Throughput+Capacity Growth for a job
+# Qumulo Activity Reporting Tool (qactivity): Show IOPS+Capacity Growth for a job
 
 qactivity/ daemon is a command-line tool that does the following:
 
