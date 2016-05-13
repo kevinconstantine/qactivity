@@ -44,7 +44,7 @@ the License.
 
 ### 1. Download from GitHub
 ```shell
-git clone git clone https://github.com/Qumulo/qactivity.git
+git clone https://github.com/Qumulo/qactivity.git
 ```
 Or, download the zip file (https://github.com/Qumulo/qactivity/archive/master.zip) and unzip it to 
 your machine where you will be running this tool.
